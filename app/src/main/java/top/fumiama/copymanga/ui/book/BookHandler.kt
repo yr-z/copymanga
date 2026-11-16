@@ -297,6 +297,7 @@ class BookHandler(private val th: WeakReference<BookFragment>): Handler(Looper.m
                         i++
                     }
                 }
+                Reader.chapterNames = chapterNames
             }
         }
         sendEmptyMessage(END_SET_LAYOUTS)

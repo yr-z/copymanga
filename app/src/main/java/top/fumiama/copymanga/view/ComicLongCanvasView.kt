@@ -651,7 +651,13 @@ class ComicLongCanvasView @JvmOverloads constructor(
         val scaledTotalHeight = totalHeight * currentScale
         if (scaledTotalHeight > height) {
             val dyMin = height - scaledTotalHeight
-            transY = max(min(transY, 0f), dyMin)
+            if (transY > 0f) {
+                transY = 0f
+                onEdgeListener?.onReachTop()
+            } else if (transY < dyMin) {
+                transY = dyMin
+                onEdgeListener?.onReachBottom()
+            }
         } else {
             transY = (height - scaledTotalHeight) / 2f
         }

@@ -212,6 +212,7 @@ class VMHandler(activity: ViewMangaActivity, private val chapterUrl: String, pri
             vprog?.visibility = View.GONE
             try {
                 initManga()
+                updateChapterNavigationButtons()
             } catch (e: Exception) {
                 e.printStackTrace()
             }

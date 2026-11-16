@@ -17,7 +17,17 @@ import java.io.File
 
 object Reader {
     var fileArray = arrayOf<File>()
-    fun start2viewManga(name: String?, pos: Int, urlArray: Array<String>, uuidArray: Array<String>, fromFirstPage: Boolean = false) {
+    var chapterNames = arrayOf<String>()
+
+    fun start2viewManga(
+        name: String?,
+        pos: Int,
+        urlArray: Array<String>,
+        uuidArray: Array<String>,
+        fromFirstPage: Boolean = false,
+        chapterNames: Array<String>? = null
+    ) {
+        chapterNames?.let { Reader.chapterNames = it }
         Log.d("MyR", "viewMangaAt name $name, pos $pos")
         mainWeakReference?.get()?.apply {
             // ViewMangaActivity.dlhandler = null
@@ -33,14 +43,19 @@ object Reader {
             intent.putExtra("position", pos)
             intent.putExtra("urlArray", urlArray)
             intent.putExtra("uuidArray", uuidArray)
+            if (Reader.chapterNames.isNotEmpty()) {
+                intent.putExtra("chapterNames", Reader.chapterNames)
+            }
             if (!fromFirstPage) {
                 intent.putExtra("function", "log")
                 intent.putExtra("pn", -2)
             }
-            val zipFile = fileArray[pos]
-            if (zipFile.exists()) {
-                intent.putExtra("zipFile", zipFile.absolutePath)
-                //intent.putExtra("callFrom", "zipFirst")
+            if (pos in fileArray.indices) {
+                val zipFile = fileArray[pos]
+                if (zipFile.exists()) {
+                    intent.putExtra("zipFile", zipFile.absolutePath)
+                    //intent.putExtra("callFrom", "zipFirst")
+                }
             }
             startActivity(intent)
         }

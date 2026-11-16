@@ -6,9 +6,12 @@ import android.app.Service
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Typeface
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
+import android.graphics.drawable.GradientDrawable
 import android.media.AudioManager
 import android.os.Bundle
 import android.os.Handler
@@ -21,8 +24,10 @@ import android.view.ViewGroup
 import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.view.WindowManager
+import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.SeekBar
+import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.animation.doOnEnd
@@ -31,6 +36,8 @@ import androidx.core.content.edit
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.RecyclerView
 import androidx.viewpager2.widget.ViewPager2
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import top.fumiama.copymanga.api.manga.Reader
 import com.bumptech.glide.Glide
 import com.bumptech.glide.load.DataSource
 import com.bumptech.glide.load.engine.GlideException
@@ -127,6 +134,7 @@ class ViewMangaActivity : TitleActivityTemplate() {
 
     var urlArray = arrayOf<String>()
     var uuidArray = arrayOf<String>()
+    var chapterNames = arrayOf<String>()
     var position = 0
     var comicName: String? = null
     private var zipFile: File? = null
@@ -163,6 +171,10 @@ class ViewMangaActivity : TitleActivityTemplate() {
         //zipFirst = intent.getStringExtra("callFrom") == "zipFirst"
         intent.getStringArrayExtra("urlArray")?.let { urlArray = it }
         intent.getStringArrayExtra("uuidArray")?.let { uuidArray = it }
+        intent.getStringArrayExtra("chapterNames")?.let { chapterNames = it }
+        if (chapterNames.isEmpty() && Reader.chapterNames.isNotEmpty()) {
+            chapterNames = Reader.chapterNames
+        }
         position = intent.getIntExtra("position", 0)
         comicName = intent.getStringExtra("comicName")
         zipFile = intent.getStringExtra("zipFile")?.let { File(it) }
@@ -650,8 +662,9 @@ class ViewMangaActivity : TitleActivityTemplate() {
         try {
             prepareVP()
             prepareInfoBar()
+            prepareChapterNavigation()
             prepareIdBtVH()
-            toolsBox.dp2px(if(fullyHideInfo) 100 else 67)?.let { setIdPosition(it) }
+            toolsBox.dp2px(if(fullyHideInfo) 165 else 125)?.let { setIdPosition(it) }
             prepareIdBtCut()
             prepareIdBtVP()
             prepareIdBtLR()
@@ -761,7 +774,8 @@ class ViewMangaActivity : TitleActivityTemplate() {
         oneinfo.alpha = 0F
         infseek.visibility = View.GONE
         isearch.visibility = View.GONE
-        inftitle.ttitle.text = "$comicName ${mHandler.manga?.results?.chapter?.name}"
+        inftitle.ttitle.text = "$comicName ${mHandler.manga?.results?.chapter?.name ?: ""}"
+        inftitle.ttitle.setOnClickListener { showChapterMenu() }
         inftxtprogress.text = "$pageNum/$realCount"
         infseek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             var p = 0
@@ -878,8 +892,153 @@ class ViewMangaActivity : TitleActivityTemplate() {
                 vprog?.visibility = View.GONE
             }
         }
+        var lastEdgeToastTime = 0L
+        vCanvas.setOnEdgeListener(object : ComicLongCanvasView.OnEdgeListener {
+            override fun onReachTop() {
+                val now = System.currentTimeMillis()
+                if (now - lastEdgeToastTime > 3500) {
+                    lastEdgeToastTime = now
+                    if (position > 0) {
+                        Toast.makeText(this@ViewMangaActivity, "已到本话顶部，可点击【上一话】切换", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(this@ViewMangaActivity, "已经是第一话了", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+
+            override fun onReachBottom() {
+                val now = System.currentTimeMillis()
+                if (now - lastEdgeToastTime > 3500) {
+                    lastEdgeToastTime = now
+                    if (position < urlArray.size - 1) {
+                        Toast.makeText(this@ViewMangaActivity, "已到本话末尾，可点击【下一话】继续阅读", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(this@ViewMangaActivity, "已经是最后一话了", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        })
         vCanvas.setPageBitmapLoader { pageIndex, targetWidth ->
             loadPageBitmapForCanvas(pageIndex, targetWidth)
+        }
+    }
+
+    private fun prepareChapterNavigation() {
+        btn_prev_chapter?.setOnClickListener {
+            loadRelativeChapter(-1)
+        }
+        btn_next_chapter?.setOnClickListener {
+            loadRelativeChapter(1)
+        }
+        btn_chapter_menu?.setOnClickListener {
+            showChapterMenu()
+        }
+        updateChapterNavigationButtons()
+    }
+
+    fun updateChapterNavigationButtons() {
+        val total = if (urlArray.isNotEmpty()) urlArray.size else 0
+        val hasPrev = total > 0 && position > 0
+        val hasNext = total > 0 && position < total - 1
+
+        btn_prev_chapter?.apply {
+            isEnabled = hasPrev
+            alpha = if (hasPrev) 1.0f else 0.4f
+        }
+        btn_next_chapter?.apply {
+            isEnabled = hasNext
+            alpha = if (hasNext) 1.0f else 0.4f
+        }
+        btn_chapter_menu?.text = "目录 (${position + 1}/$total)"
+    }
+
+    fun loadRelativeChapter(delta: Int) {
+        val total = if (urlArray.isNotEmpty()) urlArray.size else 0
+        if (total <= 0) {
+            Toast.makeText(this, "暂无更多章节", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val target = position + delta
+        if (target < 0) {
+            Toast.makeText(this, "已经是第一话了", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (target >= total) {
+            Toast.makeText(this, "已经是最后一话了", Toast.LENGTH_SHORT).show()
+            return
+        }
+        loadChapter(target)
+    }
+
+    fun loadChapter(targetPos: Int) {
+        val total = if (urlArray.isNotEmpty()) urlArray.size else 0
+        if (targetPos !in 0 until total) return
+        tt.canDo = false
+        lifecycleScope.launch {
+            setProgress()
+            val name = comicName ?: mHandler.manga?.results?.comic?.name ?: ""
+            Reader.chapterNames = chapterNames
+            Reader.start2viewManga(name, targetPos, urlArray, uuidArray, fromFirstPage = true, chapterNames = chapterNames)
+            finish()
+        }
+    }
+
+    fun showChapterMenu() {
+        val total = if (urlArray.isNotEmpty()) urlArray.size else 0
+        if (total <= 0) {
+            Toast.makeText(this, "暂无章节目录", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val selectedIndex = position.coerceIn(0, total - 1)
+        val chapterTitles = Array(total) { idx ->
+            if (idx in chapterNames.indices && chapterNames[idx].isNotEmpty()) {
+                chapterNames[idx]
+            } else if (idx == position && mHandler.manga?.results?.chapter?.name != null) {
+                mHandler.manga?.results?.chapter?.name ?: "第 ${idx + 1} 话"
+            } else {
+                "第 ${idx + 1} 话"
+            }
+        }
+
+        val primaryColor = ContextCompat.getColor(this, R.color.colorPrimary)
+        val normalTextColor = colorOnSurface
+
+        val adapter = object : ArrayAdapter<String>(this, android.R.layout.simple_list_item_1, chapterTitles) {
+            override fun getView(pos: Int, convertView: View?, parent: ViewGroup): View {
+                val itemView = super.getView(pos, convertView, parent) as TextView
+                val isCurrent = pos == selectedIndex
+
+                val bg = GradientDrawable().apply {
+                    cornerRadius = (toolsBox.dp2px(12) ?: 24).toFloat()
+                    setColor(
+                        if (isCurrent) Color.argb(45, Color.red(primaryColor), Color.green(primaryColor), Color.blue(primaryColor))
+                        else Color.TRANSPARENT
+                    )
+                }
+                itemView.background = bg
+                val padH = toolsBox.dp2px(20) ?: 40
+                val padV = toolsBox.dp2px(14) ?: 28
+                itemView.setPadding(padH, padV, padH, padV)
+                itemView.setTextColor(if (isCurrent) primaryColor else normalTextColor)
+                itemView.setTypeface(null, if (isCurrent) Typeface.BOLD else Typeface.NORMAL)
+                return itemView
+            }
+        }
+
+        val dialog = MaterialAlertDialogBuilder(this)
+            .setTitle("${comicName ?: "漫画"} - 目录 (${selectedIndex + 1}/$total)")
+            .setAdapter(adapter) { _, which ->
+                if (which != position) {
+                    loadChapter(which)
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
+
+        val listView = dialog.listView
+        if (listView != null && selectedIndex > 0) {
+            listView.setSelection(kotlin.math.max(0, selectedIndex - 2))
         }
     }
 
