@@ -594,13 +594,7 @@ class ComicLongCanvasView @JvmOverloads constructor(
         val scaledTotalHeight = totalHeight * currentScale
         if (scaledTotalHeight > height) {
             val dyMin = height - scaledTotalHeight
-            if (transY > 0f) {
-                onEdgeListener?.onReachTop()
-                transY = 0f
-            } else if (transY < dyMin) {
-                onEdgeListener?.onReachBottom()
-                transY = dyMin
-            }
+            transY = max(min(transY, 0f), dyMin)
         } else {
             transY = (height - scaledTotalHeight) / 2f
         }
@@ -694,6 +688,10 @@ class ComicLongCanvasView @JvmOverloads constructor(
     }
 
     private inner class GestureListener : GestureDetector.SimpleOnGestureListener() {
+        override fun onDown(e: MotionEvent): Boolean {
+            return true
+        }
+
         override fun onScroll(e1: MotionEvent?, e2: MotionEvent, distanceX: Float, distanceY: Float): Boolean {
             imageMatrix.postTranslate(-distanceX, -distanceY)
             checkTranslationBounds()

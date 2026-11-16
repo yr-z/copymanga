@@ -331,6 +331,7 @@ class ViewMangaActivity : TitleActivityTemplate() {
         else withContext(Dispatchers.Main) {
             val initial = if (isPnValid) (pn - 1).coerceAtLeast(0) else 0
             vCanvas.setPageCount(realCount, initial)
+            vprog?.visibility = View.GONE
             if (isPnValid) restorePN()
         }
     }
@@ -847,14 +848,11 @@ class ViewMangaActivity : TitleActivityTemplate() {
                 lifecycleScope.launch { updateSeekBar(currentPage - 1) }
             }
         }
-        vCanvas.setOnEdgeListener(object : ComicLongCanvasView.OnEdgeListener {
-            override fun onReachTop() {
-                pm?.toPage(false)
+        vCanvas.setOnLoadingChangeListener { isLoading ->
+            if (!isLoading) {
+                vprog?.visibility = View.GONE
             }
-            override fun onReachBottom() {
-                pm?.toPage(true)
-            }
-        })
+        }
         vCanvas.setPageBitmapLoader { pageIndex, targetWidth ->
             loadPageBitmapForCanvas(pageIndex, targetWidth)
         }
@@ -863,7 +861,7 @@ class ViewMangaActivity : TitleActivityTemplate() {
     private fun loadPageBitmapForCanvas(position: Int, targetWidth: Int): Bitmap? {
         if (position < 0 || position >= realCount) return null
         val index2load = if (cut) kotlin.math.abs(indexMap[position]) - 1 else position
-        val useCut = cut && isCut[index2load]
+        val useCut = cut && isCut.getOrNull(index2load) == true
         val isLeft = cut && indexMap[position] > 0
 
         if (zipFile?.exists() == true) {
@@ -873,53 +871,20 @@ class ViewMangaActivity : TitleActivityTemplate() {
             } else null
         }
 
-        var data: ByteArray? = null
-        val task = tasks?.getOrNull(index2load)
-        if (task != null) {
-            if (!task.isDone) {
-                tasksRunStatus?.set(index2load, true)
-                task.run()
-            }
-            data = try {
-                task.get()
-            } catch (e: Exception) {
-                null
-            }
-        }
+        val url = getImgUrl(index2load) ?: return null
+        val wrappedUrl = Config.resolution.wrap(Config.imageProxy?.wrap(url) ?: url)
 
-        if (data == null || data.isEmpty()) {
-            val url = getImgUrl(index2load) ?: return null
-            val wrappedUrl = Config.resolution.wrap(Config.imageProxy?.wrap(url) ?: url)
-            try {
-                val future = DownloadTools.prepare(wrappedUrl)
-                future.run()
-                data = future.get()
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-        }
+        val bmp = try {
+            Glide.with(applicationContext)
+                .asBitmap()
+                .load(GlideUrl(wrappedUrl, Config.myGlideHeaders))
+                .submit()
+                .get(15, java.util.concurrent.TimeUnit.SECONDS)
+        } catch (e: Exception) {
+            null
+        } ?: return null
 
-        if (data == null || data.isEmpty()) return null
-
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeByteArray(data, 0, data.size, bounds)
-        val originalWidth = kotlin.math.max(1, bounds.outWidth)
-
-        var sampleSize = 1
-        val halfWidth = originalWidth / 2
-        val target = targetWidth * 2
-        while ((halfWidth / sampleSize) >= target) {
-            sampleSize *= 2
-        }
-
-        val options = BitmapFactory.Options().apply {
-            inPreferredConfig = Bitmap.Config.RGB_565
-            inDither = true
-            inSampleSize = kotlin.math.max(1, sampleSize)
-        }
-
-        val bitmap = BitmapFactory.decodeByteArray(data, 0, data.size, options) ?: return null
-        return if (useCut) cutBitmap(bitmap, isLeft) else bitmap
+        return if (useCut) cutBitmap(bmp, isLeft) else bmp
     }
 
     fun scrollBack() {
@@ -953,6 +918,18 @@ class ViewMangaActivity : TitleActivityTemplate() {
 
     private fun updateSeekProgress() {
         infseek.progress = pageNum * 100 / realCount
+    }
+
+    override fun onBackPressed() {
+        if (mHandler.dl.isShowing) {
+            mHandler.dl.dismiss()
+            return
+        }
+        if (clicked == 1) {
+            hideDrawer()
+            return
+        }
+        super.onBackPressed()
     }
 
     override fun onDestroy() {

@@ -39,6 +39,8 @@ class VMHandler(activity: ViewMangaActivity, private val chapterUrl: String, pri
     val dl = activity.let {
         val re = Dialog(it)
         re.setContentView(R.layout.dialog_unzipping)
+        re.setCancelable(true)
+        re.setCanceledOnTouchOutside(true)
         re
     }
     private var delta = -1f
@@ -102,7 +104,7 @@ class VMHandler(activity: ViewMangaActivity, private val chapterUrl: String, pri
                 loadScrollMode(item)
                 Log.d("MyVMH", "Load page from $item")
             }
-            DIALOG_HIDE -> dl.hide()
+            DIALOG_HIDE -> try { dl.hide(); dl.dismiss() } catch (e: Exception) { e.printStackTrace() }
             HIDE_INFO_CARD_FULL -> if (hasDrawerShown) {
                 hideInfCardFull(); hasDrawerShown = false
             }
@@ -202,7 +204,17 @@ class VMHandler(activity: ViewMangaActivity, private val chapterUrl: String, pri
                 comicName = manga?.results?.comic?.name
             }
             count = manga?.results?.chapter?.size?:0
-            initManga()
+            try {
+                if (dl.isShowing) dl.dismiss()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+            vprog?.visibility = View.GONE
+            try {
+                initManga()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
             vprog?.visibility = View.GONE
         }
     }
