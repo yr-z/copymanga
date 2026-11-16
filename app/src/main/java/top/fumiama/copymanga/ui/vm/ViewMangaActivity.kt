@@ -408,7 +408,16 @@ class ViewMangaActivity : TitleActivityTemplate() {
     //private fun getTempFile(position: Int) = File(cacheDir, "$position")
 
     private fun getImgUrl(position: Int) = mHandler.manga?.results?.chapter?.let {
-        it.contents[it.words?.indexOf(position)?:position].url
+        val contents = it.contents ?: return@let null
+        if (contents.isEmpty()) return@let null
+        val words = it.words
+        val targetIndex = if (words != null) {
+            val idx = words.indexOf(position)
+            if (idx in contents.indices) idx else if (position in contents.indices) position else 0
+        } else {
+            if (position in contents.indices) position else 0
+        }
+        contents.getOrNull(targetIndex)?.url
     }
 
     private fun getImgUrlArray() = mHandler.manga?.results?.chapter?.let{
@@ -849,7 +858,7 @@ class ViewMangaActivity : TitleActivityTemplate() {
             }
         }
         vCanvas.setOnLoadingChangeListener { isLoading ->
-            if (!isLoading) {
+            if (!isLoading || vCanvas.hasAnyBitmapLoaded()) {
                 vprog?.visibility = View.GONE
             }
         }
@@ -864,6 +873,7 @@ class ViewMangaActivity : TitleActivityTemplate() {
         val useCut = cut && isCut.getOrNull(index2load) == true
         val isLeft = cut && indexMap[position] > 0
 
+        // 1. 本地 Zip 漫画
         if (zipFile?.exists() == true) {
             val bmp = kotlinx.coroutines.runBlocking { getImgBitmap(index2load) }
             return if (bmp != null) {
@@ -874,17 +884,73 @@ class ViewMangaActivity : TitleActivityTemplate() {
         val url = getImgUrl(index2load) ?: return null
         val wrappedUrl = Config.resolution.wrap(Config.imageProxy?.wrap(url) ?: url)
 
+        // 2. 优先从 tasks 任务池获取预备的数据或执行下载
+        var data: ByteArray? = null
+        val task = tasks?.getOrNull(index2load)
+        if (task != null) {
+            try {
+                if (!task.isDone) {
+                    tasksRunStatus?.set(index2load, true)
+                    task.run()
+                }
+                data = task.get()
+            } catch (e: Exception) {
+                Log.w("ComicLongCanvas", "task get failed for page $position: ${e.message}")
+            }
+        }
+
+        // 3. 若 tasks 无数据，使用 DownloadTools.getHttpContent 下载
+        if (data == null || data.isEmpty()) {
+            data = try {
+                DownloadTools.getHttpContent(wrappedUrl, -1)
+            } catch (e: Exception) {
+                null
+            }
+        }
+
+        // 4. 若成功获取字节流，直接采样解码为高质量 RGB_565 位图
+        if (data != null && data.isNotEmpty()) {
+            val decoded = decodeSampledBitmap(data, targetWidth * 2)
+            if (decoded != null) {
+                return if (useCut) cutBitmap(decoded, isLeft) else decoded
+            }
+        }
+
+        // 5. 兜底策略：使用 Glide 进行异步加载与缓存获取
         val bmp = try {
             Glide.with(applicationContext)
                 .asBitmap()
                 .load(GlideUrl(wrappedUrl, Config.myGlideHeaders))
-                .submit()
-                .get(15, java.util.concurrent.TimeUnit.SECONDS)
+                .submit(targetWidth * 2, Target.SIZE_ORIGINAL)
+                .get(20, java.util.concurrent.TimeUnit.SECONDS)
         } catch (e: Exception) {
+            Log.e("ComicLongCanvas", "Glide load failed for page $position: ${e.message}")
             null
         } ?: return null
 
         return if (useCut) cutBitmap(bmp, isLeft) else bmp
+    }
+
+    private fun decodeSampledBitmap(data: ByteArray, targetWidth: Int): Bitmap? {
+        return try {
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeByteArray(data, 0, data.size, bounds)
+            val originalWidth = kotlin.math.max(1, bounds.outWidth)
+            var sampleSize = 1
+            val halfWidth = originalWidth / 2
+            while ((halfWidth / sampleSize) >= targetWidth) {
+                sampleSize *= 2
+            }
+            val options = BitmapFactory.Options().apply {
+                inPreferredConfig = Bitmap.Config.RGB_565
+                inDither = true
+                inSampleSize = kotlin.math.max(1, sampleSize)
+            }
+            BitmapFactory.decodeByteArray(data, 0, data.size, options)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
+        }
     }
 
     fun scrollBack() {

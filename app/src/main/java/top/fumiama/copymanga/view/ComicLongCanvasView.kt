@@ -73,7 +73,12 @@ class ComicLongCanvasView @JvmOverloads constructor(
 
     private val bitmapPaint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.DITHER_FLAG)
     private val backgroundPaint = Paint().apply { color = 0xFF000000.toInt() }
-    private val placeholderPaint = Paint().apply { color = 0xFF141414.toInt() }
+    private val placeholderPaint = Paint().apply { color = 0xFF181A20.toInt() }
+    private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0xFF8A8D96.toInt()
+        textSize = 42f
+        textAlign = Paint.Align.CENTER
+    }
     private val imageMatrix = Matrix()
     private val drawRect = RectF()
 
@@ -164,10 +169,31 @@ class ComicLongCanvasView @JvmOverloads constructor(
             val metric = pageMetrics[pageIndex]
             metric.isFailed = false
             metric.isLoading = false
+            metric.retryCount = 0
             metric.bitmap?.recycle()
             metric.bitmap = null
             invalidate()
         }
+    }
+
+    fun hasAnyBitmapLoaded(): Boolean {
+        for (metric in pageMetrics) {
+            if (metric.bitmap != null && !metric.bitmap!!.isRecycled) {
+                return true
+            }
+        }
+        return false
+    }
+
+    fun findPageAtScreenY(screenY: Float): Int {
+        if (pageMetrics.isEmpty() || height <= 0) return -1
+        for (index in pageMetrics.indices) {
+            val rect = getPageScreenRect(index)
+            if (screenY >= rect.top && screenY <= rect.bottom) {
+                return index
+            }
+        }
+        return -1
     }
 
     fun getPageBitmap(pageIndex: Int): Bitmap? {
@@ -341,6 +367,14 @@ class ComicLongCanvasView @JvmOverloads constructor(
                 canvas.drawBitmap(bmp, null, drawRect, bitmapPaint)
             } else {
                 canvas.drawRect(drawRect, placeholderPaint)
+                val text = if (metric.isFailed) {
+                    "第 ${index + 1} 页 加载失败 (轻触重试)"
+                } else {
+                    "第 ${index + 1} 页 加载中..."
+                }
+                val centerX = width / 2f
+                val centerY = drawTop + pageHeight / 2f
+                canvas.drawText(text, centerX, centerY, textPaint)
             }
         }
         canvas.restore()
@@ -387,7 +421,8 @@ class ComicLongCanvasView @JvmOverloads constructor(
         val targets = ArrayList<PageLoadTarget>()
         for (index in pageMetrics.indices) {
             val metric = pageMetrics[index]
-            if (metric.bitmap != null || metric.isLoading || metric.isFailed) continue
+            if (metric.bitmap != null || metric.isLoading) continue
+            if (metric.isFailed && metric.retryCount >= 2) continue
             val pageBottom = metric.startY + metric.getDisplayHeight(width)
             if (pageBottom > loadTop && metric.startY < loadBottom) {
                 targets.add(PageLoadTarget(index, metric))
@@ -407,6 +442,7 @@ class ComicLongCanvasView @JvmOverloads constructor(
         for (target in targets) {
             if (loadCount >= MAX_VISIBLE_LOADS) break
             target.metric.isLoading = true
+            target.metric.retryCount++
             enqueueBitmapLoad(target.index, target.metric)
             loadCount++
         }
@@ -656,6 +692,7 @@ class ComicLongCanvasView @JvmOverloads constructor(
         var bitmap: Bitmap? = null
         var isLoading: Boolean = false
         var isFailed: Boolean = false
+        var retryCount: Int = 0
 
         init {
             originalWidth = max(1, originalWidth)
@@ -713,6 +750,12 @@ class ComicLongCanvasView @JvmOverloads constructor(
         }
 
         override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+            val page = findPageAtScreenY(e.y)
+            if (page in pageMetrics.indices && pageMetrics[page].isFailed) {
+                pageMetrics[page].retryCount = 0
+                reloadPage(page)
+                return true
+            }
             performClick()
             return true
         }
