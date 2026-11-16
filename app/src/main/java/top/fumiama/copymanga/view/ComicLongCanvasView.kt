@@ -86,7 +86,7 @@ class ComicLongCanvasView @JvmOverloads constructor(
     private val scaleDetector = ScaleGestureDetector(context, ScaleListener())
     private val gestureDetector = GestureDetector(context, GestureListener())
     private val mainHandler = Handler(Looper.getMainLooper())
-    private val executor: ExecutorService = Executors.newFixedThreadPool(3)
+    private var executor: ExecutorService = Executors.newFixedThreadPool(3)
 
     private val pageMetrics = ArrayList<PageMetric>()
     private var totalHeight = 0f
@@ -94,6 +94,7 @@ class ComicLongCanvasView @JvmOverloads constructor(
     private var estimatedAspectRatio = DEFAULT_ASPECT_RATIO
     private var chapterGeneration = 0L
     private var detached = false
+    private var lastDispatchedPage = -1
 
     private var onPageChangeListener: OnPageChangeListener? = null
     private var onLoadingChangeListener: OnLoadingChangeListener? = null
@@ -132,6 +133,7 @@ class ComicLongCanvasView @JvmOverloads constructor(
      */
     fun setPageCount(count: Int, initialPage: Int = 0) {
         chapterGeneration++
+        lastDispatchedPage = -1
         scroller.forceFinished(true)
         recycleAllBitmaps()
         pageMetrics.clear()
@@ -282,20 +284,21 @@ class ComicLongCanvasView @JvmOverloads constructor(
         if (pageIndex !in pageMetrics.indices) return
         scroller.forceFinished(true)
         val targetY = -pageMetrics[pageIndex].startY * currentScale
+        val values = FloatArray(9)
+        imageMatrix.getValues(values)
+        val startY = values[Matrix.MTRANS_Y]
         if (!smooth) {
-            val values = FloatArray(9)
-            imageMatrix.getValues(values)
+            if (abs(startY - targetY) < 1f) return
             imageMatrix.setTranslate(values[Matrix.MTRANS_X], targetY)
             checkTranslationBounds()
             dispatchPageChanged()
             dispatchTransformChanged()
             invalidate()
         } else {
-            val values = FloatArray(9)
-            imageMatrix.getValues(values)
-            val startY = values[Matrix.MTRANS_Y].roundToInt()
-            val dy = (targetY - startY).roundToInt()
-            scroller.startScroll(0, startY, 0, dy, 350)
+            val startYInt = startY.roundToInt()
+            val dy = (targetY - startYInt).roundToInt()
+            if (abs(dy) <= 1) return
+            scroller.startScroll(0, startYInt, 0, dy, 350)
             postInvalidateOnAnimation()
         }
     }
@@ -354,13 +357,22 @@ class ComicLongCanvasView @JvmOverloads constructor(
 
         scheduleVisibleLoads()
 
+        val viewport = getUnscaledViewport()
+        val visibleTop = viewport.top - 100f
+        val visibleBottom = viewport.bottom + 100f
+
         canvas.save()
         canvas.concat(imageMatrix)
         for (index in pageMetrics.indices) {
             val metric = pageMetrics[index]
             val pageHeight = metric.getDisplayHeight(width)
-            val drawTop = metric.startY - (if (index > 0) PAGE_STITCH_OVERLAP else 0f)
-            val drawBottom = metric.startY + pageHeight + (if (index < pageMetrics.size - 1) PAGE_STITCH_OVERLAP else 0f)
+            val pageTop = metric.startY
+            val pageBottom = pageTop + pageHeight
+            if (pageBottom < visibleTop || pageTop > visibleBottom) {
+                continue
+            }
+            val drawTop = pageTop - (if (index > 0) PAGE_STITCH_OVERLAP else 0f)
+            val drawBottom = pageBottom + (if (index < pageMetrics.size - 1) PAGE_STITCH_OVERLAP else 0f)
             drawRect.set(0f, drawTop, width.toFloat(), drawBottom)
             val bmp = metric.bitmap
             if (bmp != null && !bmp.isRecycled) {
@@ -398,9 +410,18 @@ class ComicLongCanvasView @JvmOverloads constructor(
         return scaleHandled || gestureHandled || super.onTouchEvent(event)
     }
 
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        detached = false
+        if (executor.isShutdown || executor.isTerminated) {
+            executor = Executors.newFixedThreadPool(3)
+        }
+    }
+
     override fun onDetachedFromWindow() {
         detached = true
         chapterGeneration++
+        lastDispatchedPage = -1
         scroller.forceFinished(true)
         recycleAllBitmaps()
         executor.shutdownNow()
@@ -664,7 +685,11 @@ class ComicLongCanvasView @JvmOverloads constructor(
     }
 
     private fun dispatchPageChanged() {
-        onPageChangeListener?.onPageChange(max(0, getCurrentPageIndex()) + 1, pageMetrics.size)
+        val newPage = max(0, getCurrentPageIndex()) + 1
+        if (newPage != lastDispatchedPage) {
+            lastDispatchedPage = newPage
+            onPageChangeListener?.onPageChange(newPage, pageMetrics.size)
+        }
     }
 
     private fun dispatchTransformChanged() {

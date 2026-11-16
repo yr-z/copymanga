@@ -330,6 +330,7 @@ class ViewMangaActivity : TitleActivityTemplate() {
         if (!isVertical) restorePN()
         else withContext(Dispatchers.Main) {
             val initial = if (isPnValid) (pn - 1).coerceAtLeast(0) else 0
+            currentItem = initial
             vCanvas.setPageCount(realCount, initial)
             vprog?.visibility = View.GONE
             if (isPnValid) restorePN()
@@ -381,8 +382,11 @@ class ViewMangaActivity : TitleActivityTemplate() {
         if (r2l && !notUseVP) vp.currentItem = realCount - num
         else if (notUseVP) {
             if(isVertical) {
-                currentItem = (num - 1).coerceIn(0, (realCount - 1).coerceAtLeast(0))
-                vCanvas.scrollToPage(currentItem)
+                val target = (num - 1).coerceIn(0, (realCount - 1).coerceAtLeast(0))
+                if (currentItem != target) {
+                    currentItem = target
+                    vCanvas.scrollToPage(currentItem)
+                }
                 updateSeekBar()
             } else {
                 currentItem = num - 1
@@ -771,8 +775,11 @@ class ViewMangaActivity : TitleActivityTemplate() {
                     Log.d("MyVM", "seek to $np")
                     if (isVertical) {
                         p = np
-                        vCanvas.scrollToPage(np - 1)
-                        pageNum = np
+                        val target = (np - 1).coerceIn(0, (realCount - 1).coerceAtLeast(0))
+                        if (currentItem != target) {
+                            currentItem = target
+                            vCanvas.scrollToPage(target)
+                        }
                         updateSeekText(np)
                         return
                     }
@@ -795,8 +802,10 @@ class ViewMangaActivity : TitleActivityTemplate() {
             override fun onStopTrackingTouch(p0: SeekBar?) {
                 if (isVertical) {
                     val target = (p - 1).coerceIn(0, (realCount - 1).coerceAtLeast(0))
-                    vCanvas.scrollToPage(target)
-                    pageNum = target + 1
+                    if (currentItem != target) {
+                        currentItem = target
+                        vCanvas.scrollToPage(target)
+                    }
                     isInSeek = false
                     return
                 }
@@ -852,9 +861,16 @@ class ViewMangaActivity : TitleActivityTemplate() {
             pm?.toggleDrawer()
         }
         vCanvas.setOnPageChangeListener { currentPage, _ ->
-            if (!isInSeek) {
-                pageNum = currentPage
-                lifecycleScope.launch { updateSeekBar(currentPage - 1) }
+            val index = (currentPage - 1).coerceIn(0, (realCount - 1).coerceAtLeast(0))
+            if (currentItem != index) {
+                currentItem = index
+                if (!isInSeek) {
+                    lifecycleScope.launch {
+                        updateSeekText(currentPage)
+                        updateSeekProgress()
+                        setProgress()
+                    }
+                }
             }
         }
         vCanvas.setOnLoadingChangeListener { isLoading ->
@@ -893,7 +909,7 @@ class ViewMangaActivity : TitleActivityTemplate() {
                     tasksRunStatus?.set(index2load, true)
                     task.run()
                 }
-                data = task.get()
+                data = task.get(15, java.util.concurrent.TimeUnit.SECONDS)
             } catch (e: Exception) {
                 Log.w("ComicLongCanvas", "task get failed for page $position: ${e.message}")
             }
@@ -956,10 +972,12 @@ class ViewMangaActivity : TitleActivityTemplate() {
     fun scrollBack() {
         isInScroll = false
         if (isVertical) {
-            val target = kotlin.math.max(0, pageNum - 2)
-            vCanvas.scrollToPage(target, smooth = true)
-            pageNum = target + 1
-            lifecycleScope.launch { updateSeekBar(pageNum - 1) }
+            val target = kotlin.math.max(0, currentItem - 1)
+            if (currentItem != target) {
+                currentItem = target
+                vCanvas.scrollToPage(target, smooth = true)
+                lifecycleScope.launch { updateSeekBar(target + 1) }
+            }
         } else {
             pageNum--
         }
@@ -968,10 +986,12 @@ class ViewMangaActivity : TitleActivityTemplate() {
     fun scrollForward() {
         isInScroll = false
         if (isVertical) {
-            val target = kotlin.math.min(realCount - 1, pageNum)
-            vCanvas.scrollToPage(target, smooth = true)
-            pageNum = target + 1
-            lifecycleScope.launch { updateSeekBar(pageNum - 1) }
+            val target = kotlin.math.min(realCount - 1, currentItem + 1)
+            if (currentItem != target) {
+                currentItem = target
+                vCanvas.scrollToPage(target, smooth = true)
+                lifecycleScope.launch { updateSeekBar(target + 1) }
+            }
         } else {
             pageNum++
         }
