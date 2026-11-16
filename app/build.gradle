@@ -2,10 +2,11 @@ plugins {
     id 'com.android.application'
     id 'kotlin-android'
     id 'kotlin-android-extensions'
-    id 'kotlin-kapt'
+    // id 'kotlin-kapt'
 }
 
 android {
+    buildToolsVersion '36.0.0'
     defaultConfig {
         compileSdk 34
         applicationId 'top.fumiama.copymanga'
@@ -113,8 +114,7 @@ dependencies {
     implementation 'com.github.yalantis:ucrop:2.2.6'
     implementation 'io.github.zguop:pager2Banner:1.0.5'
     implementation 'com.github.bumptech.glide:glide:4.16.0'
-    //noinspection KaptUsageInsteadOfKsp
-    kapt 'com.github.bumptech.glide:compiler:4.16.0'
+    // kapt 'com.github.bumptech.glide:compiler:4.16.0'
     implementation 'com.google.code.gson:gson:2.13.1'
     implementation 'com.github.vovaksenov99:OverscrollableScrollView:1.0'
     implementation 'com.github.liaoinstan.SpringView:library:0a24d3e9dd'

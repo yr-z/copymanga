@@ -60,6 +60,7 @@ import top.fumiama.copymanga.net.DownloadTools
 import top.fumiama.copymanga.view.interaction.TimeThread
 import top.fumiama.copymanga.view.Font
 import top.fumiama.copymanga.view.ScaleImageView
+import top.fumiama.copymanga.view.ComicLongCanvasView
 import top.fumiama.dmzj.copymanga.R
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -224,11 +225,19 @@ class ViewMangaActivity : TitleActivityTemplate() {
         var flag = false
         if(volTurnPage) when(keyCode) {
             KeyEvent.KEYCODE_VOLUME_UP -> {
-                pm?.toPage(false)
+                if (isVertical) {
+                    vCanvas.scrollByDistance(-vCanvas.height * 0.75f, true)
+                } else {
+                    pm?.toPage(false)
+                }
                 flag = true
             }
             KeyEvent.KEYCODE_VOLUME_DOWN -> {
-                pm?.toPage(true)
+                if (isVertical) {
+                    vCanvas.scrollByDistance(vCanvas.height * 0.75f, true)
+                } else {
+                    pm?.toPage(true)
+                }
                 flag = true
             }
         }
@@ -319,6 +328,11 @@ class ViewMangaActivity : TitleActivityTemplate() {
         if (zipFile?.exists() != true) doPrepareWebImg()
         else prepareItems()
         if (!isVertical) restorePN()
+        else withContext(Dispatchers.Main) {
+            val initial = if (isPnValid) (pn - 1).coerceAtLeast(0) else 0
+            vCanvas.setPageCount(realCount, initial)
+            if (isPnValid) restorePN()
+        }
     }
 
     private suspend fun prepareImgFromWeb() {
@@ -366,10 +380,8 @@ class ViewMangaActivity : TitleActivityTemplate() {
         if (r2l && !notUseVP) vp.currentItem = realCount - num
         else if (notUseVP) {
             if(isVertical) {
-                currentItem = num - 1
-                val offset = currentItem % verticalLoadMaxCount
-                Log.d("MyVM", "Current: $currentItem, Height: ${psivl.height}, scrollY: ${psivs.scrollY}")
-                if (!isInScroll || isInSeek) psivs.scrollY = psivl.height * offset / size
+                currentItem = (num - 1).coerceIn(0, (realCount - 1).coerceAtLeast(0))
+                vCanvas.scrollToPage(currentItem)
                 updateSeekBar()
             } else {
                 currentItem = num - 1
@@ -697,10 +709,17 @@ class ViewMangaActivity : TitleActivityTemplate() {
     private fun prepareVP() {
         if (notUseVP) {
             vp.visibility = View.GONE
-            if(!isVertical) vone.visibility = View.VISIBLE
+            if(!isVertical) {
+                vone.visibility = View.VISIBLE
+                vCanvas.visibility = View.GONE
+            } else {
+                vone.visibility = View.GONE
+                vCanvas.visibility = View.VISIBLE
+            }
         } else {
             vp.visibility = View.VISIBLE
             vone.visibility = View.GONE
+            vCanvas.visibility = View.GONE
             vp.adapter = ViewData(vp).RecyclerViewAdapter()
             vp.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
                 override fun onPageSelected(position: Int) {
@@ -740,6 +759,13 @@ class ViewMangaActivity : TitleActivityTemplate() {
                     if (np <= 0) np = 1
                     else if (np > realCount) np = realCount
                     Log.d("MyVM", "seek to $np")
+                    if (isVertical) {
+                        p = np
+                        vCanvas.scrollToPage(np - 1)
+                        pageNum = np
+                        updateSeekText(np)
+                        return
+                    }
                     if (p1 >= (pageNum + 1) * 100 / realCount) {
                         if(manualCount < 3) scrollForward() else p = np
                         after()
@@ -757,6 +783,13 @@ class ViewMangaActivity : TitleActivityTemplate() {
                 manualCount = 0
             }
             override fun onStopTrackingTouch(p0: SeekBar?) {
+                if (isVertical) {
+                    val target = (p - 1).coerceIn(0, (realCount - 1).coerceAtLeast(0))
+                    vCanvas.scrollToPage(target)
+                    pageNum = target + 1
+                    isInSeek = false
+                    return
+                }
                 if(manualCount >= 3) {
                     val pS = p
                     Log.d("MyVM", "stop seek at $pS")
@@ -791,41 +824,11 @@ class ViewMangaActivity : TitleActivityTemplate() {
         idtbvh.isChecked = isVertical
         pm = PagesManager(WeakReference(this))
         if (isVertical) {
-            (vsp as SpringView).apply {
-                footerView.lht.setText(R.string.button_more)
-                headerView.lht.setText(R.string.button_more)
-                setListener(object :SpringView.OnFreshListener{
-                    override fun onLoadmore() {
-                        //scrollForward()
-                        pm?.toPage(true)
-                        onFinishFreshAndLoad()
-                    }
-                    override fun onRefresh() {
-                        //scrollBack()
-                        pm?.toPage(false)
-                        onFinishFreshAndLoad()
-                    }
-                })
-            }
             vp.visibility = View.GONE
-            vsp.visibility = View.VISIBLE
-            initImgList()
-            mHandler.sendEmptyMessage(if(isPnValid) VMHandler.LOAD_PAGE_FROM_ITEM else VMHandler.LOAD_SCROLL_MODE)
-            psivs.setOnScrollChangeListener { _, _, scrollY, _, _ ->
-                isInScroll = true
-                if(!isInSeek) {
-                    val delta = (scrollY.toFloat() * size.toFloat() / psivl.height.toFloat() + 0.5).toInt() - currentItem % verticalLoadMaxCount
-                    if(delta != 0 && !(delta > 0 && pageNum == size)) {
-                        val fin = pageNum + delta
-                        pageNum = when {
-                            fin <= 0 -> 1
-                            fin%verticalLoadMaxCount == 0 -> fin/verticalLoadMaxCount*verticalLoadMaxCount
-                            else -> fin
-                        }
-                        Log.d("MyVM", "Scroll to offset $delta, page $pageNum")
-                    }
-                }
-            }
+            vone.visibility = View.GONE
+            vsp.visibility = View.GONE
+            vCanvas.visibility = View.VISIBLE
+            setupCanvasReader()
         }
         idtbvh.setOnClickListener {
             pb["vertical"] = idtbvh.isChecked
@@ -833,34 +836,113 @@ class ViewMangaActivity : TitleActivityTemplate() {
         }
     }
 
+    @OptIn(ExperimentalStdlibApi::class)
+    private fun setupCanvasReader() {
+        vCanvas.setOnClickListener {
+            pm?.toggleDrawer()
+        }
+        vCanvas.setOnPageChangeListener { currentPage, _ ->
+            if (!isInSeek) {
+                pageNum = currentPage
+                lifecycleScope.launch { updateSeekBar(currentPage - 1) }
+            }
+        }
+        vCanvas.setOnEdgeListener(object : ComicLongCanvasView.OnEdgeListener {
+            override fun onReachTop() {
+                pm?.toPage(false)
+            }
+            override fun onReachBottom() {
+                pm?.toPage(true)
+            }
+        })
+        vCanvas.setPageBitmapLoader { pageIndex, targetWidth ->
+            loadPageBitmapForCanvas(pageIndex, targetWidth)
+        }
+    }
+
+    private fun loadPageBitmapForCanvas(position: Int, targetWidth: Int): Bitmap? {
+        if (position < 0 || position >= realCount) return null
+        val index2load = if (cut) kotlin.math.abs(indexMap[position]) - 1 else position
+        val useCut = cut && isCut[index2load]
+        val isLeft = cut && indexMap[position] > 0
+
+        if (zipFile?.exists() == true) {
+            val bmp = kotlinx.coroutines.runBlocking { getImgBitmap(index2load) }
+            return if (bmp != null) {
+                if (useCut) cutBitmap(bmp, isLeft) else bmp
+            } else null
+        }
+
+        var data: ByteArray? = null
+        val task = tasks?.getOrNull(index2load)
+        if (task != null) {
+            if (!task.isDone) {
+                tasksRunStatus?.set(index2load, true)
+                task.run()
+            }
+            data = try {
+                task.get()
+            } catch (e: Exception) {
+                null
+            }
+        }
+
+        if (data == null || data.isEmpty()) {
+            val url = getImgUrl(index2load) ?: return null
+            val wrappedUrl = Config.resolution.wrap(Config.imageProxy?.wrap(url) ?: url)
+            try {
+                val future = DownloadTools.prepare(wrappedUrl)
+                future.run()
+                data = future.get()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+
+        if (data == null || data.isEmpty()) return null
+
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(data, 0, data.size, bounds)
+        val originalWidth = kotlin.math.max(1, bounds.outWidth)
+
+        var sampleSize = 1
+        val halfWidth = originalWidth / 2
+        val target = targetWidth * 2
+        while ((halfWidth / sampleSize) >= target) {
+            sampleSize *= 2
+        }
+
+        val options = BitmapFactory.Options().apply {
+            inPreferredConfig = Bitmap.Config.RGB_565
+            inDither = true
+            inSampleSize = kotlin.math.max(1, sampleSize)
+        }
+
+        val bitmap = BitmapFactory.decodeByteArray(data, 0, data.size, options) ?: return null
+        return if (useCut) cutBitmap(bitmap, isLeft) else bitmap
+    }
+
     fun scrollBack() {
         isInScroll = false
-        if(isVertical && (pageNum-1) % verticalLoadMaxCount == 0) {
-            Log.d("MyVM", "Do scroll back, isVertical: $isVertical, pageNum: $pageNum")
-            if (isInSeek) {
-                (pageNum-1).let { lifecycleScope.launch { updateSeekBar(it) } }
-                return
-            }
-            mHandler.obtainMessage(
-                VMHandler.LOAD_ITEM_SCROLL_MODE,
-                currentItem - verticalLoadMaxCount, 0,
-                Runnable{
-                    forceLetPNValid = true
-                    pn = pageNum-1
-                }
-            ).sendToTarget()    //loadImgsIntoLine(currentItem - verticalLoadMaxCount)
-        } else pageNum--
+        if (isVertical) {
+            val target = kotlin.math.max(0, pageNum - 2)
+            vCanvas.scrollToPage(target, smooth = true)
+            pageNum = target + 1
+            lifecycleScope.launch { updateSeekBar(pageNum - 1) }
+        } else {
+            pageNum--
+        }
     }
 
     fun scrollForward() {
         isInScroll = false
-        pageNum++
-        if(isVertical && (pageNum-1) % verticalLoadMaxCount == 0) {
-            if (isInSeek) {
-                (pageNum+1).let { lifecycleScope.launch { updateSeekBar(it) } }
-                return
-            }
-            mHandler.sendEmptyMessage(VMHandler.LOAD_SCROLL_MODE)
+        if (isVertical) {
+            val target = kotlin.math.min(realCount - 1, pageNum)
+            vCanvas.scrollToPage(target, smooth = true)
+            pageNum = target + 1
+            lifecycleScope.launch { updateSeekBar(pageNum - 1) }
+        } else {
+            pageNum++
         }
     }
 
