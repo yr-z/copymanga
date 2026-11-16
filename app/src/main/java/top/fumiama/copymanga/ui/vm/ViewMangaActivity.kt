@@ -664,7 +664,7 @@ class ViewMangaActivity : TitleActivityTemplate() {
             prepareInfoBar()
             prepareChapterNavigation()
             prepareIdBtVH()
-            toolsBox.dp2px(if(fullyHideInfo) 165 else 125)?.let { setIdPosition(it) }
+            toolsBox.dp2px(if(fullyHideInfo) 100 else 67)?.let { setIdPosition(it) }
             prepareIdBtCut()
             prepareIdBtVP()
             prepareIdBtLR()
@@ -930,7 +930,7 @@ class ViewMangaActivity : TitleActivityTemplate() {
         btn_next_chapter?.setOnClickListener {
             loadRelativeChapter(1)
         }
-        btn_chapter_menu?.setOnClickListener {
+        inftitle.ttitle.setOnClickListener {
             showChapterMenu()
         }
         updateChapterNavigationButtons()
@@ -943,13 +943,12 @@ class ViewMangaActivity : TitleActivityTemplate() {
 
         btn_prev_chapter?.apply {
             isEnabled = hasPrev
-            alpha = if (hasPrev) 1.0f else 0.4f
+            alpha = if (hasPrev) 1.0f else 0.3f
         }
         btn_next_chapter?.apply {
             isEnabled = hasNext
-            alpha = if (hasNext) 1.0f else 0.4f
+            alpha = if (hasNext) 1.0f else 0.3f
         }
-        btn_chapter_menu?.text = "目录 (${position + 1}/$total)"
     }
 
     fun loadRelativeChapter(delta: Int) {
